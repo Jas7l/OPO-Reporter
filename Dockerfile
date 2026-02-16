@@ -8,9 +8,7 @@ RUN apt update && \
 COPY requirements.txt /app/
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
-COPY uwsgi.ini /app/
-
 COPY . .
 WORKDIR /app/src
 
-CMD ["uwsgi", "--ini", "../uwsgi.ini"]
+CMD ["python", "-m", "app"]
