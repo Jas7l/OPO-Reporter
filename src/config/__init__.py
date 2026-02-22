@@ -11,7 +11,7 @@ class AppConfig(Model):
     """Конфиг приложения"""
 
     pg: PgConfig
-    sync_interval: int = dc.field(default=3600)
+    sync_interval: int = dc.field(default=60)
     debug: bool = dc.field(default=False)
 
 

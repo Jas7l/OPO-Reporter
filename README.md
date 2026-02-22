@@ -20,7 +20,11 @@ services:
     image: reporting-service:1.0.0
     command: python -m app
     volumes:
-      - ./config.yaml:/config.yaml
+      - ./config.yaml:/app/config.yaml
+      - ./service_account.json:/app/src/service_account.json
+    environment:
+      - GOOGLE_SHEETS_ID=${GOOGLE_SHEETS_ID}
+      - YAML_PATH=/app/config.yaml
     networks:
       - backend-network
     restart: always
@@ -40,7 +44,7 @@ pg:
   password: postgres
   database: my_db
 
-sync_interval: 3600
+sync_interval: 60
 debug: True
 
 ```
@@ -50,4 +54,6 @@ debug: True
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 POSTGRES_DB=my_db
+
+GOOGLE_SHEETS_ID=11vqxoSohZHkS9i47VI3sdkkSGBNpR7LDl3ZYt0_THA4
 ```
