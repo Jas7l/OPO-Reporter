@@ -6,3 +6,4 @@ venv/
 /pgadmin_data/
 /pgdata/
 **/config.yaml
+service_account.json
