@@ -9,21 +9,18 @@ from base_module.models import BaseOrmMappedModel, ValuedEnum
 SCHEMA_NAME = 'employee_system'
 
 
-class LocationOverrideCode(ValuedEnum):
-    """Коды форматов работы"""
+class EmployeeStatusCode(ValuedEnum):
+    """Статус сотрудника"""
 
-    OFFICE_FULL = 'Я'      # Офис (полный день)
-    REMOTE_FULL = 'Д'      # Удаленно (полный день)
-    OFFICE_TO_REMOTE = 'ЯД'  # Офис до обеда, далее удаленно
-    REMOTE_TO_OFFICE = 'ДЯ'  # Удаленно до обеда, далее офис
-
-
-class DayStatusOverride(ValuedEnum):
-    """Статус дня для ручной правки"""
-
-    SICK_LEAVE = 'Б'   # Больничный
-    VACATION = 'О'     # Отпуск
-    BUSINESS_TRIP = 'К'  # Командировка
+    WORK = 'Я'               # Работа (Явка)
+    DAY_OFF = 'В'            # Выходной
+    VACATION = 'О'           # Отпуск
+    SICK_LEAVE = 'Б'         # Больничный
+    BUSINESS_TRIP = 'К'      # Командировка
+    STUDY_LEAVE = 'У'        # Учебный отпуск
+    REMOTE_FULL = 'Д'        # Удаленно (полный день)
+    OFFICE_TO_REMOTE = 'ЯД'  # Офис до обеда → удаленно
+    REMOTE_TO_OFFICE = 'ДЯ'  # Удаленно до обеда → офис
 
 
 @dc.dataclass
@@ -81,30 +78,13 @@ class ScheduleAdjustment(BaseOrmMappedModel):
         )},
     )
 
-    location_override: typing.Optional[LocationOverrideCode] = dc.field(
+    status_override: typing.Optional[EmployeeStatusCode] = dc.field(
         default=None,
         metadata={'sa': sa.Column(
             sa.Enum(
-                LocationOverrideCode,
-                name='location_override_code_enum',
-                create_constraint=True,
-                create_type=True,
-                validate_strings=True,
-                native_enum=True,
-                values_callable=lambda x: [e.value for e in x],
-            ),
-            nullable=True,
-        )},
-    )
-
-    day_status_override: typing.Optional[DayStatusOverride] = dc.field(
-        default=None,
-        metadata={'sa': sa.Column(
-            sa.Enum(
-                DayStatusOverride,
-                name='day_status_override_enum',
-                create_constraint=True,
-                create_type=True,
+                EmployeeStatusCode,
+                name='employee_status_code_enum',
+                create_type=False,
                 validate_strings=True,
                 native_enum=True,
                 values_callable=lambda x: [e.value for e in x],

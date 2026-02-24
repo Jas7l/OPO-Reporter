@@ -1,6 +1,7 @@
 import time
 import typing as t
 
+import flask
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy_utils import database_exists, create_database
@@ -118,6 +119,10 @@ class PgConnectionInj(metaclass=ThreadIsolatedSingleton):
         session_fabric = sessionmaker(engine, expire_on_commit=False)
         self._pg = sa.orm.scoped_session(session_fabric)
 
+    def _disconnect(self, response: flask.Response):
+        self._pg.remove()
+        return response
+
     def init_db(self):
         while True:
             try:
@@ -130,8 +135,6 @@ class PgConnectionInj(metaclass=ThreadIsolatedSingleton):
                 )
                 time.sleep(self._init_error_timeout)
 
-    def close_all(self):
-        if self._pg:
-            self._pg.remove()
-            self._pg = None
-            self._logger.debug('Все соединения с БД закрыты')
+    def setup(self, app: flask.Flask):
+        self.init_db()
+        app.after_request(self._disconnect)

@@ -15,7 +15,8 @@ services:
 
   opo_reporter:
     image: reporting-service:1.0.0
-    command: python -m app
+    ports:
+      - "8020:8000"
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./service_account.json:/app/src/service_account.json
