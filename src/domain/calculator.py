@@ -4,12 +4,8 @@ from typing import List, Dict, Optional, Any
 
 # Импорты моделей
 from models.users import User, EmployeeType
-from models.schedule_base import ScheduleBase, DayStatusCode
-from models.schedule_adjustments import (
-    ScheduleAdjustment,
-    DayStatusOverride,
-    LocationOverrideCode
-)
+from models.schedule_base import ScheduleBase, EmployeeStatusCode
+from models.schedule_adjustments import ScheduleAdjustment
 from loguru import logger
 
 
@@ -55,7 +51,7 @@ class ScheduleCalculator:
                 adj = adjustments_map.get((user.id, current_date))
 
 
-                # Вычисляем значение для конкретной ячейки
+                # значение для конкретной ячейки
                 cell_data = ScheduleCalculator._calculate_day(user, plan, adj, current_date)
                 user_report[day] = cell_data
 
@@ -71,62 +67,39 @@ class ScheduleCalculator:
             current_date: date
     ) -> Dict[str, str]:
         """
-        Расчет одной ячейки (один день одного сотрудника).
+        Расчет одной ячейки с учетом объединенных статусов и динамического обеда.
         """
+        notes = []
+        final_code = "Я"  # По умолчанию
 
-        notes = []  # Список примечаний
+        # Определение Единого Статуса
+        if adj and adj.status_override:
+            final_code = adj.status_override.value
 
-        # ШАГ 1: Определение общего статуса (Рабочий или нет)
+            # Если статус рабочий, проверяем, не сменилась ли локация вне графика
+            if final_code in ["Я", "Д", "ЯД", "ДЯ"]:
+                if user.employee_type == EmployeeType.ALWAYS_REMOTE and "Д" not in final_code:
+                    notes.append("Выход в офис (вне графика)")
+                elif user.employee_type == EmployeeType.OFFICE_FIXED and "Д" in final_code:
+                    notes.append("Удаленка (вне графика)")
 
-        # Ручная правка статуса
-        if adj and adj.day_status_override:
-            status_code = adj.day_status_override.value
-            return {"code": status_code, "note": ""}
+        elif plan and plan.status:
+            final_code = plan.status.value
 
-        # Плановый график
-        if plan:
-            base_code = plan.base_code.value
-            # Если в плане стоит выходной/отпуск/командировка - берем его
-            if base_code in [
-                DayStatusCode.DAY_OFF.value,
-                DayStatusCode.VACATION.value,
-                DayStatusCode.SICK_LEAVE.value, # под вопросом
-                DayStatusCode.BUSINESS_TRIP.value
-            ]:
-                return {"code": base_code, "note": ""}
+        elif current_date.weekday() >= 5:
+            final_code = "В"
 
-
-        # По умолчанию - рабочий(кроме выходных)
-        if current_date.weekday() >= 5:
-            return {"code": "В", "note": ""}
-
-        # ШАГ 2: Определение формата работы (не понятен 2 пункт план из excel)
-
-        final_code = "Я"  # По умолчанию Офис
-
-
-        # Ручной выбор в правке
-        if adj and adj.location_override:
-            final_code = adj.location_override.value
-            # Сравниваем с профилем, чтобы добавить пометку(должно быть сравнение с графиком)
-            if user.employee_type == EmployeeType.ALWAYS_REMOTE and "Д" not in final_code:
-                notes.append("Выход в офис (вне графика)")
-            elif user.employee_type == EmployeeType.OFFICE_FIXED and "Д" in final_code:
-                notes.append("Удаленка (вне графика)")
-
-        # Тип сотрудника (если нет правки)
         else:
             if user.employee_type == EmployeeType.ALWAYS_REMOTE:
                 final_code = "Д"
-            elif user.employee_type == EmployeeType.REMOTE_BY_SCHEDULE:
-                # Тут надо смотреть план, но в модели ScheduleBase нет поля location.
-                # Предполагаем, что если в плане "Я", то для гибридника это может значить "по графику".
-                # Для упрощения пока ставим "Я", если не было overrides.
-                final_code = "Я"
             else:
                 final_code = "Я"
 
-        # ШАГ 3: Определение времени
+        # Фильтрация нерабочих дней
+        if final_code in ["В", "О", "Б", "К", "У"]:
+            return {"code": final_code, "note": ""}
+
+        # Определение времени (только для рабочих дней)
 
         # Время начала
         start_t = user.start_time
@@ -141,13 +114,20 @@ class ScheduleCalculator:
             notes.append(f"Конец: {end_t.strftime('%H:%M')}")
 
         # Обед
-        lunch_s = adj.lunch_start_override if (adj and adj.lunch_start_override) else user.lunch_start
-        if lunch_s:
-           lunch_end_dt = datetime.combine(date.today(), lunch_s) + timedelta(minutes=user.lunch_duration or 60)
-           notes.append(f"Обед: {lunch_s.strftime('%H:%M')}-{lunch_end_dt.time().strftime('%H:%M')}")
+        # Выводим только если есть ручная правка времени начала обеда
+        if adj and adj.lunch_start_override:
+            lunch_start = adj.lunch_start_override
 
-        # ШАГ 4: Наложение отлучек
+            duration_mins = user.lunch_duration or 60
 
+
+            dummy_dt = datetime.combine(current_date, lunch_start)
+            lunch_end_dt = dummy_dt + timedelta(minutes=duration_mins)
+            lunch_end = lunch_end_dt.time()
+
+            notes.append(f"Обед: {lunch_start.strftime('%H:%M')}-{lunch_end.strftime('%H:%M')}")
+
+        # Наложение отлучек
         if adj and adj.absences:
             for absence in adj.absences:
                 t_from = absence.get('from', '?')
@@ -159,14 +139,10 @@ class ScheduleCalculator:
                     note_str += f" ({reason})"
                 notes.append(note_str)
 
-        # ШАГ 5: Формирование итога
-
-        # Собираем все заметки в одну строку через перенос строки
+        # Формирование итога
         final_note = "\n".join(notes) if notes else ""
 
         return {
             "code": final_code,
             "note": final_note
         }
-
-

@@ -1,13 +1,12 @@
+import calendar
 import gspread
-from gspread.utils import rowcol_to_a1
-from typing import List, Dict, Any, Optional
+from typing import Dict
 from loguru import logger
 from datetime import date
 
 
 class GoogleSheetsService:
     def __init__(self, service_account_path: str, spreadsheet_id: str):
-        """ Инициализация подключения к Google API """
         try:
             self.gc = gspread.service_account(filename='service_account.json')
             self.sh = self.gc.open_by_key(spreadsheet_id)
@@ -17,7 +16,6 @@ class GoogleSheetsService:
             raise e
 
     def get_or_create_worksheet(self, report_date: date) -> gspread.Worksheet:
-        """ Ищет лист по имени, если нет - копирует из Template """
         month_names = {
             1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
             7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
@@ -25,12 +23,10 @@ class GoogleSheetsService:
         sheet_name = f"{month_names[report_date.month]} {report_date.year}"
 
         try:
-            # Пытаемся найти существующий лист
             ws = self.sh.worksheet(sheet_name)
             logger.info(f"Found existing worksheet: {sheet_name}")
             return ws
         except gspread.WorksheetNotFound:
-            # Если нет, ищем шаблон
             try:
                 template = self.sh.worksheet("Template")
                 new_ws = template.duplicate(new_sheet_name=sheet_name)
@@ -43,73 +39,154 @@ class GoogleSheetsService:
 
     def sync_report_data(self, report_date: date, data_map: Dict[str, Dict[int, dict]]):
         """
-        Основной метод синхронизации
-
-        data_map имеет вид:
-               {
-                 "Иванов И.И.": {
-                    1: {"code": "Я", "note": None},
-                    2: {"code": "Д", "note": "С 14:00 к врачу"},
-                    ...
-                 },
-                 ...
-               }
+        Заполняет скопированный шаблон данными: даты, нумерация, ФИО, коды.
+        Затем обрезает лишние строки и скрывает лишние дни месяца.
         """
         ws = self.get_or_create_worksheet(report_date)
 
+        # Определяем количество дней в месяце
+        _, num_days = calendar.monthrange(report_date.year, report_date.month)
 
-        fio_column = ws.col_values(2)  # Список всех значений в колонке B
+        requests = []
 
-        # Создаем маппинг: Фио: Номер строки (индекс в списке + 1)
-        fio_row_map = {fio.strip(): i + 1 for i, fio in enumerate(fio_column) if i > 5 and fio}
+        # Заполнение дат (Строка 6, Колонки C - AG)
+        date_values = []
+        for day in range(1, 32):
+            if day <= num_days:
+                # Генерируем дату в формате ДД.ММ.ГГГГ
+                date_str = f"{day:02d}.{report_date.month:02d}.{report_date.year}"
+                date_values.append({"userEnteredValue": {"stringValue": date_str}})
+            else:
+                date_values.append({"userEnteredValue": {"stringValue": ""}})  # Пусто для 29, 30, 31 (если их нет)
 
+        requests.append({
+            "updateCells": {
+                "range": {
+                    "sheetId": ws.id,
+                    "startRowIndex": 5,
+                    "endRowIndex": 6,
+                    "startColumnIndex": 2,
+                    "endColumnIndex": 33
+                },
+                "rows": [{"values": date_values}],
+                "fields": "userEnteredValue"
+            }
+        })
 
+        # Заполнение сотрудников и кодов
+        # Стартовая строка для сотрудников: 7-я (индекс 6)
+        current_row_idx = 6
 
-        requests = []  # Список запросов для batch_update
+        for index, (fio, days_data) in enumerate(data_map.items()):
+            row_cells = []
 
-        for fio, days_data in data_map.items():
-            row_idx = fio_row_map.get(fio)
+            # Колонка A: Порядковый номер
+            row_cells.append({"userEnteredValue": {"numberValue": index + 1}})
 
-            if not row_idx:
-                logger.warning(f"Employee '{fio}' found in DB but not in Google Sheet rows. Skipping.")
-                continue
+            # Колонка B: ФИО
+            row_cells.append({"userEnteredValue": {"stringValue": fio}})
 
-            for day_num, content in days_data.items():
-                # Если 1 число = Колонка C (третья), то: col = day_num + 2
-                col_idx = day_num + 2
+            # Колонки C - AG: Коды и примечания по дням
+            for day in range(1, 32):
+                if day <= num_days:
+                    cell_data = days_data.get(day, {})
+                    code = cell_data.get('code', '')
+                    note = cell_data.get('note', '')
 
-                cell_code = content.get('code', '')
-                cell_note = content.get('note', '')
+                    row_cells.append({
+                        "userEnteredValue": {"stringValue": code},
+                        "note": note if note else ""
+                    })
+                else:
+                    # Для дней, которых нет в месяце
+                    row_cells.append({"userEnteredValue": {"stringValue": ""}, "note": ""})
 
-                # Добавляем обновление значения (Value)
-                requests.append({
-                    "updateCells": {
+            requests.append({
+                "updateCells": {
+                    "range": {
+                        "sheetId": ws.id,
+                        "startRowIndex": current_row_idx,
+                        "endRowIndex": current_row_idx + 1,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 33
+                    },
+                    "rows": [{"values": row_cells}],
+                    "fields": "userEnteredValue,note"
+                }
+            })
+            current_row_idx += 1
+
+        # Отправляем весь массив данных одним пакетом
+        if requests:
+            logger.info(f"Writing data for {len(data_map)} employees...")
+            self.sh.batch_update({"requests": requests})
+
+            # Скрытие и раскрытие строк
+            total_employees = len(data_map)
+            start_row_idx = 6  #
+            start_hide_row_idx = 6 + total_employees
+            end_hide_row_idx = 56
+
+            visibility_requests = []
+
+            # Сначала принудительно раскрываем
+            if total_employees > 0:
+                visibility_requests.append({
+                    "updateDimensionProperties": {
                         "range": {
                             "sheetId": ws.id,
-                            "startRowIndex": row_idx - 1,  # API использует 0-based index
-                            "endRowIndex": row_idx,
-                            "startColumnIndex": col_idx - 1,
-                            "endColumnIndex": col_idx
+                            "dimension": "ROWS",
+                            "startIndex": start_row_idx,
+                            "endIndex": start_hide_row_idx
                         },
-                        "rows": [{
-                            "values": [{
-                                "userEnteredValue": {"stringValue": cell_code},
-                                "note": cell_note if cell_note else ""
-                                # Если note пустой, он сотрет старый
-                            }]
-                        }],
-                        "fields": "userEnteredValue,note"
+                        "properties": {
+                            "hiddenByUser": False
+                        },
+                        "fields": "hiddenByUser"
                     }
                 })
 
-        # Отправляем всё одним пакетом (Batch Update)
-        if requests:
-            logger.info(f"Sending {len(requests)} updates to Google Sheets...")
-            try:
-                self.sh.batch_update({"requests": requests})
-                logger.success("Google Sheets updated successfully.")
-            except Exception as e:
-                logger.error(f"Failed to batch update: {e}")
-                raise e
-        else:
-            logger.info("No data changes to sync.")
+            # Скрываем пустые строки до пояснения
+            if start_hide_row_idx < end_hide_row_idx:
+                visibility_requests.append({
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": ws.id,
+                            "dimension": "ROWS",
+                            "startIndex": start_hide_row_idx,
+                            "endIndex": end_hide_row_idx
+                        },
+                        "properties": {
+                            "hiddenByUser": True
+                        },
+                        "fields": "hiddenByUser"
+                    }
+                })
+
+            if visibility_requests:
+                logger.info(f"Updating row visibility (Unhide {total_employees} rows, Hide rest)...")
+                self.sh.batch_update({"requests": visibility_requests})
+
+
+
+        # Скрываем лишние колонки
+        if num_days < 31:
+            logger.info(f"Hiding unused columns for a {num_days}-day month...")
+            self.sh.batch_update({
+                "requests": [{
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": ws.id,
+                            "dimension": "COLUMNS",
+                            "startIndex": 2 + num_days,
+                            "endIndex": 33
+                        },
+                        "properties": {
+                            "hiddenByUser": True
+                        },
+                        "fields": "hiddenByUser"
+                    }
+                }]
+            })
+
+        logger.success("Worksheet customized and filled successfully.")

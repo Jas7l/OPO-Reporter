@@ -8,15 +8,18 @@ from base_module.models import BaseOrmMappedModel, ValuedEnum
 SCHEMA_NAME = 'employee_system'
 
 
-class DayStatusCode(ValuedEnum):
-    """Коды статусов дня """
+class EmployeeStatusCode(ValuedEnum):
+    """Статус сотрудника"""
 
-    WORK = 'Я'      # Работа (Явка)
-    DAY_OFF = 'В'   # Выходной
-    VACATION = 'О'  # Отпуск
-    SICK_LEAVE = 'Б'  # Больничный
-    BUSINESS_TRIP = 'К'  # Командировка
-    STUDY_LEAVE = 'У'  # Учебный отпуск
+    WORK = 'Я'               # Работа (Явка)
+    DAY_OFF = 'В'            # Выходной
+    VACATION = 'О'           # Отпуск
+    SICK_LEAVE = 'Б'         # Больничный
+    BUSINESS_TRIP = 'К'      # Командировка
+    STUDY_LEAVE = 'У'        # Учебный отпуск
+    REMOTE_FULL = 'Д'        # Удаленно (полный день)
+    OFFICE_TO_REMOTE = 'ЯД'  # Офис до обеда → удаленно
+    REMOTE_TO_OFFICE = 'ДЯ'  # Удаленно до обеда → офис
 
 
 @dc.dataclass
@@ -53,12 +56,12 @@ class ScheduleBase(BaseOrmMappedModel):
         )},
     )
 
-    base_code: DayStatusCode = dc.field(
-        default=DayStatusCode.WORK,
+    status: EmployeeStatusCode = dc.field(
+        default=EmployeeStatusCode.WORK,
         metadata={'sa': sa.Column(
             sa.Enum(
-                DayStatusCode,
-                name='day_status_code_enum',
+                EmployeeStatusCode,
+                name='employee_status_code_enum',
                 create_constraint=True,
                 create_type=True,
                 validate_strings=True,
@@ -66,7 +69,7 @@ class ScheduleBase(BaseOrmMappedModel):
                 values_callable=lambda x: [e.value for e in x],
             ),
             nullable=False,
-            server_default=DayStatusCode.WORK.value,
+            server_default=EmployeeStatusCode.WORK.value,
         )},
     )
 

@@ -6,6 +6,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      TZ: Europe/Moscow
+      PGTZ: Europe/Moscow
     ports:
       - "5442:5432"
     volumes:
@@ -16,16 +18,58 @@ services:
   opo_reporter:
     image: reporting-service:1.0.0
     command: python -m app
+#    ports:
+#      - "8020:8000"
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./service_account.json:/app/src/service_account.json
     environment:
+      - TZ=Europe/Moscow
       - GOOGLE_SHEETS_ID=${GOOGLE_SHEETS_ID}
       - YAML_PATH=/app/config.yaml
     networks:
       - backend-network
     restart: always
 
+
+# 3. Backend API (Flask)
+  opo_api:
+    build: .
+    container_name: opo_api_server
+    command: python -m app1
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./src:/app/src
+    environment:
+      - TZ=Europe/Moscow
+      - YAML_PATH=/app/config.yaml
+    networks:
+      - backend-network
+
+  # 4. Frontend (React + Vite)
+  frontend:
+    image: node:20-alpine
+    container_name: opo_frontend
+    working_dir: /app
+    # При запуске ставим зависимости и поднимаем сервер
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      # Исключаем node_modules, чтобы не конфликтовали с локальными
+      - /app/node_modules
+    networks:
+      - backend-network
+    depends_on:
+      - opo_api
+
+
 networks:
   backend-network:
     driver: bridge
+
+volumes:
+  pgdata:
