@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgres:15
+    container_name: my_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: Europe/Moscow
+      PGTZ: Europe/Moscow
+    ports:
+      - "5442:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    networks:
+      - backend-network
+
+  opo_reporter:
+    image: reporting-service:1.0.0
+    command: python -m reporter
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./service_account.json:/app/src/service_account.json
+    environment:
+      - TZ=Europe/Moscow
+      - GOOGLE_SHEETS_ID=${GOOGLE_SHEETS_ID}
+      - YAML_PATH=/app/config.yaml
+    networks:
+      - backend-network
+    restart: always
+
+
+  opo_api:
+    build: .
+    container_name: opo_api_server
+    command: python -m app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./src:/app/src
+    environment:
+      - TZ=Europe/Moscow
+      - YAML_PATH=/app/config.yaml
+    networks:
+      - backend-network
+
+  frontend:
+    image: node:20-alpine
+    container_name: opo_frontend
+    working_dir: /app
+    # При запуске ставим зависимости и поднимаем сервер
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - backend-network
+    depends_on:
+      - opo_api
+
+
+networks:
+  backend-network:
+    driver: bridge
+
+volumes:
+  pgdata:
